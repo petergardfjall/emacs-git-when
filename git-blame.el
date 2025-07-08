@@ -61,17 +61,17 @@
                 (buf (current-buffer))
                 (gitcmd (executable-find "git"))
                 ;; (statuses (make-hash-table :test 'equal))
-                (exit-code (call-process gitcmd nil buf nil "blame" "--line-porcelain" rev "--" path)))
+                (exit-code (call-process gitcmd nil buf nil "blame" "--porcelain" rev "--" path)))
       (when (> exit-code 0)
         (error "git-blame gave non-zero exit code: %d" exit-code))
 
       ;; (message "Output:\n%s" (buffer-substring (point-min) (point-max)))
-      (git-blame--parse-output (current-buffer))
+      (git-blame--parse (current-buffer))
 
       )))
 
-(defun git-blame--parse-output (output-buffer)
-  "Parses the output of a git blame call with --line-porcelain."
+(defun git-blame--parse (output-buffer)
+  "Parses the output of a git blame call with --porcelain."
   (with-current-buffer output-buffer
     ;; (let ((commit-table (make-hash-table :test 'equal))) ;; line-num => commit
       (goto-char (point-min))
@@ -113,27 +113,27 @@ Will return nil if the current line is not a git blame header."
           ;; Parse git blame header row for line.
           (let* ((tokens (split-string line)))
             (setq commit-plist (plist-put commit-plist ":sha256" (nth 0 tokens)))
-            (setq commit-plist (plist-put commit-plist ":lineno-prior" (nth 1 tokens)))
-            (setq commit-plist (plist-put commit-plist ":lineno-final" (nth 2 tokens))))
-          ;; TODO until leading TAB (which is the last line for a blame that holds the content of the line itself)
+            (setq commit-plist (plist-put commit-plist ":line-start-prior" (nth 1 tokens)))
+            (setq commit-plist (plist-put commit-plist ":line-start"  (nth 2 tokens)))
+            (setq commit-plist (plist-put commit-plist ":line-count" (nth 3 tokens))))
+
           (setq line (git-blame--next-line))
-          (while (and (not (eobp)) (not (string-prefix-p "\t" line)))
+          (while (and (not (git-blame--porcelain-header-p line)) (not (eobp)))
             (let* ((tokens (split-string line)))
               (pcase (nth 0 tokens)
+                ;; TODO simplify?
                 ("author"         (setq commit-plist (plist-put commit-plist ":author" (nth 1 tokens))))
                 ("author-mail"    (setq commit-plist (plist-put commit-plist ":author-mail" (nth 1 tokens))))
-                ("author-time"    (setq commit-plist (plist-put commit-plist ":author-time" (nth 1 tokens))))
+                ("author-time"
+                 (setq commit-plist (plist-put commit-plist ":author-time" (nth 1 tokens)))
+                 (setq commit-plist (plist-put commit-plist ":author-htime" (git-blame--humanize-time (git-blame--parse-time (nth 1 tokens))))))
                 ("author-tz"      (setq commit-plist (plist-put commit-plist ":author-tz" (nth 1 tokens))))
-                ;; ("committer-mail" (setq commit-plist (plist-put commit-plist ":committer-mail" (nth 1 tokens))))
-                ;; ("committer-time" (setq commit-plist (plist-put commit-plist ":committer-time" (nth 1 tokens))))
-                ;; ("committer-tz"   (setq commit-plist (plist-put commit-plist ":committer-tz" (nth 1 tokens))))
-                ;; TODO tokens[1:]
                 ("summary"        (setq commit-plist (plist-put commit-plist ":summary" (string-remove-prefix "summary " line))))
                 ))
             (setq line (git-blame--next-line)))
-          (forward-line 1)
           commit-plist)
       nil)))
+
 
 (defun git-blame--next-line ()
   "TODO"
@@ -142,7 +142,36 @@ Will return nil if the current line is not a git blame header."
 
 (defun git-blame--porcelain-header-p (line)
   ;; <commit> <lineno-prior> <lineno-final> [num-group-lines]
-  (string-match "[0-9a-f]\\{40\\} [0-9]+ [0-9]+" line))
+  (string-match "[0-9a-f]\\{40\\} [0-9]+ [0-9]+ [0-9]+" line))
+
+
+(defun git-blame--parse-time (epoch-time-string)
+  "Convert a git blame timestamp like '1727681138' to a Lisp timestamp."
+  (time-convert (string-to-number epoch-time-string)))
+
+
+(defun git-blame--humanize-time (time)
+  ;; TODO
+  (let* ((time-with-unit
+          (let* ((seconds-since (time-to-seconds (time-since time))))
+            (if (> seconds-since (* 365 24 3600))
+                `(,(floor (/ seconds-since (* 365 24 3600))) . "year")
+              (if (> seconds-since (* 30 24 3600))
+                  `(,(floor (/ seconds-since (* 30 24 3600))) . "month")
+                (if (> seconds-since (* 7 24 3600))
+                    `(,(floor (/ seconds-since (* 7 24 3600))) . "week")
+                  (if (> seconds-since (* 24 3600))
+                      `(,(floor (/ seconds-since (* 24 3600))) . "day")
+                    (if (> seconds-since 3600)
+                        `(,(floor (/ seconds-since 3600)) . "hour")
+                      (if (> seconds-since 60)
+                          `(,(floor (/ seconds-since 60)) . "minute")
+                        `(,seconds-since . "second")))))))))
+         (time (round (car time-with-unit)))
+         (unit (cdr time-with-unit)))
+    (if (> time 1)
+        `(,time . ,(concat unit "s"))
+      (cons time unit))))
 
 ;; (defcustom projtree-window-width 30
 ;;   "The width in characters to use for the project tree buffer."
