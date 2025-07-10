@@ -50,7 +50,27 @@
   (git-blame--exec rev file)
   ;; TODO parse output into one blame struct per line
   ;; TODO render each blame line in a buffer with mode map to allow further navigation
+  ;; TODO goto a certain line?
   )
+
+(defun git-blame--render (rev file blame-data)
+  (let* ((buf-name (format "*git-blame-%s-%s*" rev file)))
+    (with-current-buffer (get-buffer-create
+                          (format "*git-blame-%s-%s*" (buffer-name)))
+      (setq buffer-read-only nil)
+      (erase-buffer)
+
+      ;; TODO render: iterate over lines:
+      ;; - render "blame-data[lineno]" "<separator>" "<line-content>"
+      ;;   - can be multiline
+      ;;   - truncate at given width
+      ;; - asssociate commit revision with each line
+      (dolist (lines data)
+        ;; TODO
+        )
+      (setq buffer-read-only t)
+      ;; TODO enable git-blame-mode-map for navigation
+      (display-buffer (current-buffer)))))
 
 (defun git-blame--exec (rev file)
   "TODO: return a hash table mapping line numbers to commit structs"
@@ -66,83 +86,80 @@
         (error "git-blame gave non-zero exit code: %d" exit-code))
 
       ;; (message "Output:\n%s" (buffer-substring (point-min) (point-max)))
-      (git-blame--parse (current-buffer))
+      (let ((blame-data (git-blame--parse (current-buffer))))
+        (dolist (line (plist-get blame-data :lines))
+          (message "%s: %s" (plist-get line :commit) (plist-get line :content)))))))
 
-      )))
-
+;; TODO change parsing to produce two things
+;; - commit-table: hash map keyed on commit-rev -> plist (:author, :author-mail, :summary, etc)
+;; - lines: array keyed on line number with each entry being a plist (:commit, :content)
+;;
+;; Use --line-porcelain
+;; repeat until EOF
+;; - lineindex++
+;; - create next commit-object
+;; - if not blame header: error
+;; - if not commit already in commit-table:
+;;   - populate commit-object properties until reaching content-line ('\t')
+;; - commit-table[rev] = commit-object
+;; - file-lines[lineindex] = line(:commit rev, :content: read-next-line())
 (defun git-blame--parse (output-buffer)
   "Parses the output of a git blame call with --porcelain."
   (with-current-buffer output-buffer
-    ;; (let ((commit-table (make-hash-table :test 'equal))) ;; line-num => commit
-      (goto-char (point-min))
-      (while-let ((commit (git-blame--parse-next)))
-        (message "Commit:\n%s" commit)
-        ;; TODO store away commits in a buffer-local variable? (for later access
-        ;; to navigate to older commit)
-        )
-      ))
+    (goto-char (point-min))
+    (let* ((file-lines '())
+           (commit-table (make-hash-table :test 'equal)))
+      (while (not (eobp))
+        (when (not (git-blame--porcelain-header-p (git-blame--current-line)))
+          (error "Failed to parse git blame output: expected porcelain header"))
+        ;; Parse git blame header row for line.
+        (let* ((tokens (split-string (git-blame--current-line)))
+               (commit-rev       (nth 0 tokens)))
+          ;; Commit not encountered before, commit details will follow.
+          (when (not (gethash commit-rev commit-table))
+            (while (not (git-blame--content-line-p (git-blame--peek-next-line)))
+              (let* ((line (git-blame--next-line))
+                     (tokens (split-string line))
+                     (commit-plist `(:rev ,commit-rev)))
+                (pcase (nth 0 tokens)
+                  ("author"         (setq commit-plist (plist-put commit-plist :author (nth 1 tokens))))
+                  ("author-mail"    (setq commit-plist (plist-put commit-plist :author-mail (nth 1 tokens))))
+                  ("author-time"
+                   (setq commit-plist (plist-put commit-plist :author-time (nth 1 tokens)))
+                   (setq commit-plist (plist-put commit-plist :author-htime (git-blame--humanize-time (git-blame--parse-time (nth 1 tokens))))))
+                  ("author-tz"      (setq commit-plist (plist-put commit-plist :author-tz (nth 1 tokens))))
+                  ("summary"        (setq commit-plist (plist-put commit-plist :summary (string-remove-prefix "summary " line)))))
+                (puthash commit-rev commit-plist commit-table))))
+          ;; The next (tab-prefixed) line holds the actuan content of the line in the file.
+          ;; (setq content-line (git-blame--next-line))
+          (let* ((content-line (git-blame--next-line))
+                 (file-line `(:commit ,commit-rev :content ,(string-trim-left content-line))))
+            (setq file-lines (append file-lines (list file-line)))))
+        (git-blame--next-line))
+
+      ;; Return the gathered content lines and commit table.
+      `(:lines ,file-lines :commit-table ,commit-table))))
 
 
-
-        ;; (let* ((line (buffer-substring (line-beginning-position) (line-end-position)))
-        ;;        (tokens (split-string line))
-        ;;        (status (nth 0 tokens))
-        ;;        ;; Normally the file follows the status code, but for renames the
-        ;;        ;; new filename comes later: "R prior/path -> new/path"
-        ;;        (file (if (equal status "R") (nth 3 tokens) (nth 1 tokens)))
-        ;;        (path (projtree--abspath (expand-file-name file))))
-
-        ;;   ;; TODO (git-blame--porcelain-header-p line)
-
-        ;;   ;; (puthash path status statuses)
-        ;;   ;; TODO save commit for lines
-        ;;   ;; (projtree-git--mark-ancestor-status statuses git-root path status)
-
-        ;;   ;; Next line of output.
-        ;;   (forward-line 1))
-        ;; )
-      ;; statuses)))
-
-(defun git-blame--parse-next ()
-  "Parses the git blame for the next line. Assumes the current buffer is a
-buffer containing output from a git blame --line-porcelain call.
-Will return nil if the current line is not a git blame header."
-  (let ((line (buffer-substring (line-beginning-position) (line-end-position))))
-    (if (git-blame--porcelain-header-p line)
-        (let ((commit-plist '()))
-          ;; Parse git blame header row for line.
-          (let* ((tokens (split-string line)))
-            (setq commit-plist (plist-put commit-plist ":sha256" (nth 0 tokens)))
-            (setq commit-plist (plist-put commit-plist ":line-start-prior" (nth 1 tokens)))
-            (setq commit-plist (plist-put commit-plist ":line-start"  (nth 2 tokens)))
-            (setq commit-plist (plist-put commit-plist ":line-count" (nth 3 tokens))))
-
-          (setq line (git-blame--next-line))
-          (while (and (not (git-blame--porcelain-header-p line)) (not (eobp)))
-            (let* ((tokens (split-string line)))
-              (pcase (nth 0 tokens)
-                ;; TODO simplify?
-                ("author"         (setq commit-plist (plist-put commit-plist ":author" (nth 1 tokens))))
-                ("author-mail"    (setq commit-plist (plist-put commit-plist ":author-mail" (nth 1 tokens))))
-                ("author-time"
-                 (setq commit-plist (plist-put commit-plist ":author-time" (nth 1 tokens)))
-                 (setq commit-plist (plist-put commit-plist ":author-htime" (git-blame--humanize-time (git-blame--parse-time (nth 1 tokens))))))
-                ("author-tz"      (setq commit-plist (plist-put commit-plist ":author-tz" (nth 1 tokens))))
-                ("summary"        (setq commit-plist (plist-put commit-plist ":summary" (string-remove-prefix "summary " line))))
-                ))
-            (setq line (git-blame--next-line)))
-          commit-plist)
-      nil)))
-
+(defun git-blame--peek-next-line ()
+  "Return the next line without moving cursor."
+  (save-excursion (git-blame--next-line)))
 
 (defun git-blame--next-line ()
   "TODO"
   (forward-line 1)
+  (git-blame--current-line))
+
+(defun git-blame--current-line ()
+  "TODO"
   (buffer-substring (line-beginning-position) (line-end-position)))
+
+(defun git-blame--content-line-p (line)
+  (string-prefix-p "\t" line))
 
 (defun git-blame--porcelain-header-p (line)
   ;; <commit> <lineno-prior> <lineno-final> [num-group-lines]
-  (string-match "[0-9a-f]\\{40\\} [0-9]+ [0-9]+ [0-9]+" line))
+  (string-match "[0-9a-f]\\{40\\} [0-9]+ [0-9]+\\( [0-9]+\\)?" line))
 
 
 (defun git-blame--parse-time (epoch-time-string)
