@@ -47,48 +47,50 @@
   (unless (vc-git-root file)
     (error "File %s is not under git control" file))
   (message "opening git-blame buffer for revision: %s, file: %s, line: %d" rev file lineno)
-  (git-blame--exec rev file)
-  ;; TODO parse output into one blame struct per line
-  ;; TODO render each blame line in a buffer with mode map to allow further navigation
-  ;; TODO goto a certain line?
-  )
+  (let ((blame-data (git-blame--exec rev file)))
+    (git-blame--render rev file blame-data)))
 
 (defun git-blame--render (rev file blame-data)
-  (let* ((buf-name (format "*git-blame-%s-%s*" rev file)))
-    (with-current-buffer (get-buffer-create
-                          (format "*git-blame-%s-%s*" (buffer-name)))
+  ""
+  (let* ((repo-path (git-blame--repo-path file))
+         (buffer-name (format "*git-blame@%s:%s*" rev repo-path)))
+    (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
+    (with-current-buffer (get-buffer-create buffer-name)
       (setq buffer-read-only nil)
       (erase-buffer)
-
       ;; TODO render: iterate over lines:
       ;; - render "blame-data[lineno]" "<separator>" "<line-content>"
       ;;   - can be multiline
       ;;   - truncate at given width
       ;; - asssociate commit revision with each line
-      (dolist (lines data)
-        ;; TODO
-        )
+      (dolist (line (plist-get blame-data :lines))
+        (let* ((content (plist-get line :content))
+               (commit  (plist-get line :commit)))
+          (insert (propertize (format "%s:" commit) 'face 'shadow))
+          (insert (propertize (format "%s\n" content) 'face 'default))))
       (setq buffer-read-only t)
       ;; TODO enable git-blame-mode-map for navigation
-      (display-buffer (current-buffer)))))
+      (display-buffer-same-window (current-buffer) '()))))
 
 (defun git-blame--exec (rev file)
   "TODO: return a hash table mapping line numbers to commit structs"
   (with-temp-buffer
-    ;; (setq-local default-directory root-dir)
-    (when-let* ((git-root (vc-git-root file))
-                (path (file-relative-name file git-root))
-                (buf (current-buffer))
-                (gitcmd (executable-find "git"))
-                ;; (statuses (make-hash-table :test 'equal))
-                (exit-code (call-process gitcmd nil buf nil "blame" "--porcelain" rev "--" path)))
-      (when (> exit-code 0)
-        (error "git-blame gave non-zero exit code: %d" exit-code))
 
-      ;; (message "Output:\n%s" (buffer-substring (point-min) (point-max)))
-      (let ((blame-data (git-blame--parse (current-buffer))))
-        (dolist (line (plist-get blame-data :lines))
-          (message "%s: %s" (plist-get line :commit) (plist-get line :content)))))))
+    (message "repo-path: %s" (git-blame--repo-path file))
+    (when-let* ((git-root (vc-git-root file))
+                (repo-path (git-blame--repo-path file))
+                (gitcmd (executable-find "git")))
+                ;; (statuses (make-hash-table :test 'equal))
+      (setq-local default-directory git-root)
+      (let ((exit-code (call-process gitcmd nil (current-buffer) nil "blame" "--porcelain" rev "--" repo-path)))
+        (when (> exit-code 0)
+          (error "git-blame gave non-zero exit code: %d" exit-code)))
+      (git-blame--parse (current-buffer)))))
+
+(defun git-blame--repo-path (path)
+  "Return a path relative to the repository root folder for file PATH."
+  (when-let* ((git-root (vc-git-root path)))
+    (file-relative-name path git-root)))
 
 ;; TODO change parsing to produce two things
 ;; - commit-table: hash map keyed on commit-rev -> plist (:author, :author-mail, :summary, etc)
