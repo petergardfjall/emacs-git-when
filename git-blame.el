@@ -71,10 +71,10 @@
                (commit (gethash commit-rev commit-table))
                (htime (plist-get commit :author-htime))
                (commit-message (plist-get commit :summary))
-               (annotation-line (format "%s %s (%s ago)"
+               (annotation-line (format "%s (%s ago) %s"
                                         (truncate-string-to-width commit-rev 7)
-                                        (truncate-string-to-width commit-message  30 0 nil ".." nil)
-                                        htime))
+                                        htime
+                                        commit-message))
                (content-line (propertize (format "%s\n" content) 'face 'default)))
           (insert (propertize (truncate-string-to-width annotation-line 45 0 ?\s ".." nil)
                               'face 'shadow))
@@ -82,6 +82,8 @@
           (insert (propertize content-line 'face 'default))))
       (goto-line curr-line)
       (setq buffer-read-only t)
+      (toggle-truncate-lines 1) ;; Don't wrap lines.
+
       ;; TODO enable git-blame-mode-map for navigation
       (display-buffer-same-window (current-buffer) '()))))
 
