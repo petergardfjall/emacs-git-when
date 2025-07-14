@@ -53,7 +53,9 @@
 (defun git-blame--render (rev file blame-data)
   ""
   (let* ((repo-path (git-blame--repo-path file))
-         (buffer-name (format "*git-blame@%s:%s*" rev repo-path)))
+         (buffer-name (format "*git-blame@%s:%s*" rev repo-path))
+         (curr-line (line-number-at-pos))
+         (commit-table (plist-get blame-data :commit-table)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
     (with-current-buffer (get-buffer-create buffer-name)
       (setq buffer-read-only nil)
@@ -65,9 +67,20 @@
       ;; - asssociate commit revision with each line
       (dolist (line (plist-get blame-data :lines))
         (let* ((content (plist-get line :content))
-               (commit  (plist-get line :commit)))
-          (insert (propertize (format "%s:" commit) 'face 'shadow))
-          (insert (propertize (format "%s\n" content) 'face 'default))))
+               (commit-rev  (plist-get line :commit))
+               (commit (gethash commit-rev commit-table))
+               (htime (plist-get commit :author-htime))
+               (commit-message (plist-get commit :summary))
+               (annotation-line (format "%s %s (%s ago)"
+                                        (truncate-string-to-width commit-rev 7)
+                                        (truncate-string-to-width commit-message  30 0 nil ".." nil)
+                                        htime))
+               (content-line (propertize (format "%s\n" content) 'face 'default)))
+          (insert (propertize (truncate-string-to-width annotation-line 45 0 ?\s ".." nil)
+                              'face 'shadow))
+          (insert " | ")
+          (insert (propertize content-line 'face 'default))))
+      (goto-line curr-line)
       (setq buffer-read-only t)
       ;; TODO enable git-blame-mode-map for navigation
       (display-buffer-same-window (current-buffer) '()))))
@@ -116,13 +129,13 @@
           (error "Failed to parse git blame output: expected porcelain header"))
         ;; Parse git blame header row for line.
         (let* ((tokens (split-string (git-blame--current-line)))
-               (commit-rev       (nth 0 tokens)))
+               (commit-rev       (nth 0 tokens))
+               (commit-plist `(:rev ,commit-rev)))
           ;; Commit not encountered before, commit details will follow.
           (when (not (gethash commit-rev commit-table))
             (while (not (git-blame--content-line-p (git-blame--peek-next-line)))
               (let* ((line (git-blame--next-line))
-                     (tokens (split-string line))
-                     (commit-plist `(:rev ,commit-rev)))
+                     (tokens (split-string line)))
                 (pcase (nth 0 tokens)
                   ("author"         (setq commit-plist (plist-put commit-plist :author (nth 1 tokens))))
                   ("author-mail"    (setq commit-plist (plist-put commit-plist :author-mail (nth 1 tokens))))
@@ -130,8 +143,8 @@
                    (setq commit-plist (plist-put commit-plist :author-time (nth 1 tokens)))
                    (setq commit-plist (plist-put commit-plist :author-htime (git-blame--humanize-time (git-blame--parse-time (nth 1 tokens))))))
                   ("author-tz"      (setq commit-plist (plist-put commit-plist :author-tz (nth 1 tokens))))
-                  ("summary"        (setq commit-plist (plist-put commit-plist :summary (string-remove-prefix "summary " line)))))
-                (puthash commit-rev commit-plist commit-table))))
+                  ("summary"        (setq commit-plist (plist-put commit-plist :summary (string-remove-prefix "summary " line)))))))
+            (puthash commit-rev commit-plist commit-table))
           ;; The next (tab-prefixed) line holds the actuan content of the line in the file.
           ;; (setq content-line (git-blame--next-line))
           (let* ((content-line (git-blame--next-line))
@@ -189,8 +202,8 @@
          (time (round (car time-with-unit)))
          (unit (cdr time-with-unit)))
     (if (> time 1)
-        `(,time . ,(concat unit "s"))
-      (cons time unit))))
+        (format "%d %s" time (concat unit "s"))
+      (format "%d %s" time unit))))
 
 ;; (defcustom projtree-window-width 30
 ;;   "The width in characters to use for the project tree buffer."
