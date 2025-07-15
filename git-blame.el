@@ -61,6 +61,7 @@
          (commit-table (plist-get blame-data :commit-table)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
     (with-current-buffer (get-buffer-create buffer-name)
+      (display-line-numbers-mode)
       (setq buffer-read-only nil)
       (erase-buffer)
       (setq-local left-margin-width git-blame--commit-margin-width)
@@ -91,7 +92,6 @@
                          (propertize "o" 'display (list '(margin left-margin)
                                                         (propertize annotation-line 'face 'shadow)))))
           (newline)
-          ;; TODO line numbers
           ;; TODO propertize content lines according to content type?
           ;; Can we use auto-mode-alist regexps to determine what mode to set for the new buffer?
           ;; (assoc-default name auto-mode-alist 'string-match)
