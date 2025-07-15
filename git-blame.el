@@ -36,6 +36,9 @@
 ;; TODO customize faces
 ;; TODO customize mode map
 
+(defvar git-blame--commit-margin-width 40
+  "The width (in characters) that the commit info in the left margin will occupy.")
+
 (defvar git-blame--git-cmd
   "Full system path to a git executable.")
 
@@ -60,6 +63,7 @@
     (with-current-buffer (get-buffer-create buffer-name)
       (setq buffer-read-only nil)
       (erase-buffer)
+      (setq-local left-margin-width git-blame--commit-margin-width)
       ;; TODO render: iterate over lines:
       ;; - render "blame-data[lineno]" "<separator>" "<line-content>"
       ;;   - can be multiline
@@ -71,15 +75,27 @@
                (commit (gethash commit-rev commit-table))
                (htime (plist-get commit :author-htime))
                (commit-message (plist-get commit :summary))
-               (annotation-line (format "%s (%s ago) %s"
-                                        (truncate-string-to-width commit-rev 7)
-                                        htime
-                                        commit-message))
-               (content-line (propertize (format "%s\n" content) 'face 'default)))
-          (insert (propertize (truncate-string-to-width annotation-line 45 0 ?\s ".." nil)
-                              'face 'shadow))
-          (insert " | ")
-          (insert (propertize content-line 'face 'default))))
+               (annotation-line
+                (truncate-string-to-width
+                 (format "%s (%s ago) %s"
+                         (truncate-string-to-width commit-rev 7)
+                         htime
+                         commit-message)
+                 git-blame--commit-margin-width 0 ?\s ".." nil))
+               (content-line (propertize content 'face 'default)))
+          (insert (propertize content-line 'face 'default))
+          ;; Display commit data in margin:
+          ;; see https://github.com/magit/magit/issues/1381
+          (let ((o (make-overlay (line-beginning-position) (line-end-position) nil t)))
+            (overlay-put o 'before-string
+                         (propertize "o" 'display (list '(margin left-margin)
+                                                        (propertize annotation-line 'face 'shadow)))))
+          (newline)
+          ;; TODO line numbers
+          ;; TODO propertize content lines according to content type?
+          ;; Can we use auto-mode-alist regexps to determine what mode to set for the new buffer?
+          ;; (assoc-default name auto-mode-alist 'string-match)
+          ))
       (goto-line curr-line)
       (setq buffer-read-only t)
       (toggle-truncate-lines 1) ;; Don't wrap lines.
@@ -90,7 +106,6 @@
 (defun git-blame--exec (rev file)
   "TODO: return a hash table mapping line numbers to commit structs"
   (with-temp-buffer
-
     (message "repo-path: %s" (git-blame--repo-path file))
     (when-let* ((git-root (vc-git-root file))
                 (repo-path (git-blame--repo-path file))
@@ -150,7 +165,7 @@
           ;; The next (tab-prefixed) line holds the actuan content of the line in the file.
           ;; (setq content-line (git-blame--next-line))
           (let* ((content-line (git-blame--next-line))
-                 (file-line `(:commit ,commit-rev :content ,(string-trim-left content-line))))
+                 (file-line `(:commit ,commit-rev :content ,(string-trim-left content-line "\t"))))
             (setq file-lines (append file-lines (list file-line)))))
         (git-blame--next-line))
 
