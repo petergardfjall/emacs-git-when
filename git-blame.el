@@ -56,11 +56,15 @@
 (defun git-blame--render (rev file blame-data)
   ""
   (let* ((repo-path (git-blame--repo-path file))
-         (buffer-name (format "*git-blame@%s:%s*" rev repo-path))
+         (buffer-name (format "git-blame@%s:%s" rev repo-path))
          (curr-line (line-number-at-pos))
          (commit-table (plist-get blame-data :commit-table)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
     (with-current-buffer (get-buffer-create buffer-name)
+      ;; Fontify buffer by setting the right major mode for the file name.
+      (let ((major-mode-fn (or (assoc-default (buffer-name) auto-mode-alist #'string-match) #'ignore)))
+        (funcall major-mode-fn))
+
       (display-line-numbers-mode)
       (setq buffer-read-only nil)
       (erase-buffer)
