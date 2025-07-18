@@ -32,6 +32,7 @@
 ;; (require 'hierarchy)
 ;; (require 'project)
 (require 'vc-git)
+(require 'xref)
 
 ;; TODO customize faces
 ;; TODO customize mode map
@@ -58,6 +59,7 @@
   (let* ((repo-path (git-blame--repo-path file))
          (buffer-name (format "git-blame@%s:%s" rev repo-path))
          (curr-line (line-number-at-pos))
+         (lines-table (plist-get blame-data :lines-table))
          (commit-table (plist-get blame-data :commit-table)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
     (with-current-buffer (get-buffer-create buffer-name)
@@ -74,8 +76,9 @@
       ;;   - can be multiline
       ;;   - truncate at given width
       ;; - asssociate commit revision with each line
-      (dolist (line (plist-get blame-data :lines))
-        (let* ((content (plist-get line :content))
+      (dotimes (i (hash-table-count lines-table))
+        (let* ((line (gethash (+ i 1) lines-table))
+               (line-content (plist-get line :content))
                (commit-rev  (plist-get line :commit))
                (commit (gethash commit-rev commit-table))
                (htime (plist-get commit :author-htime))
@@ -86,20 +89,21 @@
                          (truncate-string-to-width commit-rev 7)
                          htime
                          commit-message)
-                 git-blame--commit-margin-width 0 ?\s ".." nil))
-               (content-line (propertize content 'face 'default)))
-          (insert (propertize content-line 'face 'default))
-          ;; Display commit data in margin:
-          ;; see https://github.com/magit/magit/issues/1381
-          (let ((o (make-overlay (line-beginning-position) (line-end-position) nil t)))
-            (overlay-put o 'before-string
-                         (propertize "o" 'display (list '(margin left-margin)
-                                                        (propertize annotation-line 'face 'shadow)))))
+                 git-blame--commit-margin-width 0 ?\s ".." nil)))
+          (insert (propertize line-content 'face 'default))
+          (when (or (eql i 0) (and (> i 1) (not (string-equal (plist-get (gethash i lines-table) :commit) commit-rev))))
+            ;; Display commit data in margin:
+            ;; see https://github.com/magit/magit/issues/1381
+            (let ((o (make-overlay (line-beginning-position) (line-end-position) nil t)))
+              (overlay-put o 'before-string
+                           (propertize "o" 'display (list '(margin left-margin)
+                                                          (propertize annotation-line 'face '(:inherit shadow :overline t)))))))
           (newline)
           ;; TODO propertize content lines according to content type?
           ;; Can we use auto-mode-alist regexps to determine what mode to set for the new buffer?
           ;; (assoc-default name auto-mode-alist 'string-match)
           ))
+
       (goto-line curr-line)
       (setq buffer-read-only t)
       (toggle-truncate-lines 1) ;; Don't wrap lines.
@@ -143,7 +147,7 @@
   "Parses the output of a git blame call with --porcelain."
   (with-current-buffer output-buffer
     (goto-char (point-min))
-    (let* ((file-lines '())
+    (let* ((file-lines-table (make-hash-table :test 'equal))
            (commit-table (make-hash-table :test 'equal)))
       (while (not (eobp))
         (when (not (git-blame--porcelain-header-p (git-blame--current-line)))
@@ -151,6 +155,7 @@
         ;; Parse git blame header row for line.
         (let* ((tokens (split-string (git-blame--current-line)))
                (commit-rev       (nth 0 tokens))
+               (line-num         (string-to-number (nth 2 tokens)))
                (commit-plist `(:rev ,commit-rev)))
           ;; Commit not encountered before, commit details will follow.
           (when (not (gethash commit-rev commit-table))
@@ -166,15 +171,14 @@
                   ("author-tz"      (setq commit-plist (plist-put commit-plist :author-tz (nth 1 tokens))))
                   ("summary"        (setq commit-plist (plist-put commit-plist :summary (string-remove-prefix "summary " line)))))))
             (puthash commit-rev commit-plist commit-table))
-          ;; The next (tab-prefixed) line holds the actuan content of the line in the file.
+          ;; The next (tab-prefixed) line holds the actual content of the line in the file.
           ;; (setq content-line (git-blame--next-line))
           (let* ((content-line (git-blame--next-line))
                  (file-line `(:commit ,commit-rev :content ,(string-trim-left content-line "\t"))))
-            (setq file-lines (append file-lines (list file-line)))))
+            (puthash line-num file-line file-lines-table)))
         (git-blame--next-line))
-
       ;; Return the gathered content lines and commit table.
-      `(:lines ,file-lines :commit-table ,commit-table))))
+      `(:lines-table ,file-lines-table :commit-table ,commit-table))))
 
 
 (defun git-blame--peek-next-line ()
