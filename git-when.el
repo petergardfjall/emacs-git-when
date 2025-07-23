@@ -39,6 +39,7 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "<M-down>") #'git-when-at-point)
     (define-key map (kbd "<M-up>")   #'xref-go-back) ;; git-when-pop?
+    (define-key map (kbd "d")        #'git-when-display-commit) ;; Show in echo area
     map)
   "Keybindings available in the git blame buffer.")
 
@@ -80,6 +81,23 @@ Needs to be run from a git blame buffer."
          (filename (git-when--commit->filename commit))
          (lineno   (git-when--commit->original-lineno commit)))
     (git-when rev filename lineno)))
+
+(defun git-when-display-commit ()
+  "Displays commit details in the echo area for the line at point."
+  (interactive)
+  (when (not (git-when-buffer-p (current-buffer)))
+    (error "Not visiting a blame buffer"))
+  (let* ((lines-table (plist-get blame-data :lines-table))
+         (commit-table (plist-get blame-data :commit-table))
+         (line (gethash (line-number-at-pos) lines-table))
+         (commit (gethash (plist-get line :commit) commit-table))
+
+         (rev     (git-when--commit->rev commit))
+         (author  (git-when--commit->author commit))
+         (time    (format-time-string "%a %b %d %H:%M:%S %Y %z" (git-when--commit->time commit)))
+         (summary (git-when--commit->summary commit))
+         (message (format "commit %s\nAuthor: %s\nDate: %s\n\n    %s" rev author time summary)))
+    (display-message-or-buffer message)))
 
 (defun git-when-buffer-p (buffer)
   "Indicates if the BUFFER is a git blame buffer."
@@ -205,7 +223,7 @@ Needs to be run from a git blame buffer."
                   ("author"         (git-when--commit->set-author commit val))
                   ("author-mail"    (git-when--commit->set-mail commit val))
                   ("author-time"
-                   (git-when--commit->set-time commit val)
+                   (git-when--commit->set-time commit (git-when--parse-time val))
                    (git-when--commit->set-htime commit (git-when--humanize-time (git-when--parse-time val))))
                   ("author-tz"      (git-when--commit->set-tz commit val))
                   ("summary"        (git-when--commit->set-summary commit (string-remove-prefix "summary " line)))
