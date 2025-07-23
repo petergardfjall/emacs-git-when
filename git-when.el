@@ -49,6 +49,7 @@
 (defvar git-when--git-cmd
   "Full system path to a git executable.")
 
+
 (defun git-when (&optional rev file lineno)
   (interactive
    (list "HEAD"                               ;; rev TODO: git rev-parse HEAD
@@ -75,9 +76,9 @@ Needs to be run from a git blame buffer."
          (line (gethash (line-number-at-pos) lines-table))
          (commit (gethash (plist-get line :commit) commit-table))
 
-         (rev      (plist-get commit :rev))
-         (filename (plist-get commit :filename))
-         (lineno   (plist-get commit :line-prior)))
+         (rev      (git-when--commit->rev commit))
+         (filename (git-when--commit->filename commit))
+         (lineno   (git-when--commit->original-lineno commit)))
     (git-when rev filename lineno)))
 
 (defun git-when-buffer-p (buffer)
@@ -112,14 +113,14 @@ Needs to be run from a git blame buffer."
                (line-content (plist-get line :content))
                (commit-rev  (plist-get line :commit))
                (commit (gethash commit-rev commit-table))
-               (htime (plist-get commit :author-htime))
-               (commit-message (plist-get commit :summary))
+               (htime (git-when--commit->htime commit))
+               (summary (git-when--commit->summary commit))
                (annotation-line
                 (truncate-string-to-width
                  (format "%s (%s ago) %s"
                          (truncate-string-to-width commit-rev 7)
                          htime
-                         commit-message)
+                         summary)
                  git-when--commit-margin-width 0 ?\s ".." nil)))
           (insert (propertize line-content 'face 'default))
           (when (or (eql i 0) (and (> i 0) (not (string-equal (plist-get (gethash i lines-table) :commit) commit-rev))))
@@ -138,8 +139,8 @@ Needs to be run from a git blame buffer."
       ;; Enable keymap for blame navigation.
       (use-local-map git-when-buffer-keymap)
       (setq-local blame-data blame-data)
-      (display-buffer-same-window (current-buffer) '())))
-  (set-buffer (git-when--buffer-name rev file))
+      (display-buffer-same-window (current-buffer) '())
+      (set-buffer (git-when--buffer-name rev file)))))
 
 
 (defun git-when--blame-exec (rev file)
@@ -188,35 +189,32 @@ Needs to be run from a git blame buffer."
           (error "Failed to parse git blame output: expected porcelain header"))
         ;; Parse git blame header row for line.
         (let* ((tokens (split-string (git-when--current-line)))
-               (commit-rev       (nth 0 tokens))
-               (prior-line-num   (string-to-number (nth 1 tokens)))
-               (line-num         (string-to-number (nth 2 tokens)))
-               (commit-plist `(:rev ,commit-rev :line-prior ,prior-line-num :line-final ,line-num)))
+               (commit-rev    (nth 0 tokens))
+               (orig-lineno   (string-to-number (nth 1 tokens)))
+               (final-lineno  (string-to-number (nth 2 tokens)))
+               (commit (make-git-when--commit :rev commit-rev :original-lineno orig-lineno :final-lineno final-lineno)))
           (message "header tokens: %s" tokens)
           ;; Commit not encountered before, commit details will follow.
           (when (not (gethash commit-rev commit-table))
             (while (not (git-when--content-line-p (git-when--peek-next-line)))
               (let* ((line (git-when--next-line))
-                     (tokens (split-string line)))
-                (pcase (nth 0 tokens)
-                  ("author"         (setq commit-plist (plist-put commit-plist :author (nth 1 tokens))))
-                  ("author-mail"    (setq commit-plist (plist-put commit-plist :author-mail (nth 1 tokens))))
+                     (tokens (split-string line))
+                     (key (nth 0 tokens))
+                     (val (nth 1 tokens)))
+                (pcase key
+                  ("author"         (git-when--commit->set-author commit val))
+                  ("author-mail"    (git-when--commit->set-mail commit val))
                   ("author-time"
-                   (setq commit-plist (plist-put commit-plist :author-time (nth 1 tokens)))
-                   (setq commit-plist (plist-put commit-plist :author-htime (git-when--humanize-time (git-when--parse-time (nth 1 tokens))))))
-                  ("author-tz"      (setq commit-plist (plist-put commit-plist :author-tz (nth 1 tokens))))
-                  ("summary"        (setq commit-plist (plist-put commit-plist :summary (string-remove-prefix "summary " line))))
-                  ;; Name of the file in the prior commit (might be different
-                  ;; from its current name).
-                  ("filename"       (setq commit-plist (plist-put commit-plist :filename (string-remove-prefix "filename " line)))))))
-            (puthash commit-rev commit-plist commit-table))
+                   (git-when--commit->set-time commit val)
+                   (git-when--commit->set-htime commit (git-when--humanize-time (git-when--parse-time val))))
+                  ("author-tz"      (git-when--commit->set-tz commit val))
+                  ("summary"        (git-when--commit->set-summary commit (string-remove-prefix "summary " line)))
+                  ("filename"       (git-when--commit->set-filename commit (string-remove-prefix "filename " line))))))
+            (puthash commit-rev commit commit-table))
           ;; The next (tab-prefixed) line holds the actual content of the line in the file.
-          ;; (setq content-line (git-blame--next-line))
           (let* ((content-line (git-when--next-line))
                  (file-line `(:commit ,commit-rev :content ,(string-trim-left content-line "\t"))))
-            (when (< line-num 10)
-              (message "line %d (%s): %s" line-num commit-rev content-line))
-            (puthash line-num file-line file-lines-table)))
+            (puthash final-lineno file-line file-lines-table)))
         (git-when--next-line))
       ;; Return the gathered content lines and commit table.
       `(:lines-table ,file-lines-table :commit-table ,commit-table))))
@@ -890,6 +888,114 @@ Needs to be run from a git blame buffer."
 ;;     (when projtree-profiling-enabled
 ;;       (projtree-profiling-disable))))
 
+
+
+(cl-defstruct git-when--blame
+  ;; A hash table of source file lines keyed on line number (starting at 1).
+  ;; Each value is a plist with a `:commit' and a `:content' property.
+  lines
+  ;; A hash table of commit plists keyed on commit revisions.
+  commits)
+
+(defun git-when--blame->new ()
+  "Create an empty blame data struct."
+  (make-git-when--blame
+   :lines (make-hash-table :test 'equal)
+   :commits (make-hash-table :test 'equal)))
+
+(defun git-when--blame->x (self)
+  "Do x on SELF."
+  (git-when--blame-x self))
+
+(cl-defstruct git-when--commit
+  "Holds commit details for one line of a source file.
+Follows the git blame porcelain format [1].
+
+[1] https://git-scm.com/docs/git-blame#_the_porcelain_format
+"
+
+  ;; 40-byte SHA-1 of the commit.
+  rev
+  ;; The line number of the line in the original file.
+  original-lineno
+  ;; The line number of the line in the final file.
+  final-lineno
+
+  ;; The filename in the commit that the line is attributed to
+  filename
+  ;; The first line of the commit log message
+  summary
+
+  ;; The author name.
+  author
+  ;; The author email address.
+  author-mail
+  ;; The commit timestamp.
+  author-time
+  ;; The humanized commit timestamp. For example, "2 weeks ago".
+  author-htime
+  ;; The timezone of the commit.
+  author-tz)
+
+(defun git-when--commit->rev (self)
+  (git-when--commit-rev self))
+
+(defun git-when--commit->set-rev (self rev)
+  (setf (git-when--commit-rev self) rev))
+
+(defun git-when--commit->original-lineno (self)
+  (git-when--commit-original-lineno self))
+
+(defun git-when--commit->set-original-lineno (self lineno)
+  (setf (git-when--commit-original-lineno self) lineno))
+
+(defun git-when--commit->final-lineno (self)
+  (git-when--commit-final-lineno self))
+
+(defun git-when--commit->set-final-lineno (self lineno)
+  (setf (git-when--commit-final-lineno self) lineno))
+
+(defun git-when--commit->filename (self)
+  (git-when--commit-filename self))
+
+(defun git-when--commit->set-filename (self filename)
+  (setf (git-when--commit-filename self) filename))
+
+(defun git-when--commit->summary (self)
+  (git-when--commit-summary self))
+
+(defun git-when--commit->set-summary (self summary)
+  (setf (git-when--commit-summary self) summary))
+
+(defun git-when--commit->author (self)
+  (git-when--commit-author self))
+
+(defun git-when--commit->set-author (self author)
+  (setf (git-when--commit-author self) author))
+
+(defun git-when--commit->mail (self)
+  (git-when--commit-author-mail self))
+
+(defun git-when--commit->set-mail (self email)
+  (setf (git-when--commit-author-mail self) email))
+
+(defun git-when--commit->time (self)
+  (git-when--commit-author-time self))
+
+(defun git-when--commit->set-time (self time)
+  (setf (git-when--commit-author-time self) time))
+
+(defun git-when--commit->htime (self)
+  (git-when--commit-author-htime self))
+
+(defun git-when--commit->set-htime (self htime)
+  (setf (git-when--commit-author-htime self) htime))
+
+(defun git-when--commit->tz (self)
+  (git-when--commit-author-tz self))
+
+(defun git-when--commit->set-tz (self tz)
+  (setf (git-when--commit-author-tz self) tz))
 
 
 (provide 'git-when)
