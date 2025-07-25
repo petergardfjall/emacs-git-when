@@ -73,7 +73,9 @@ Needs to be run from a git blame buffer."
          (filename (git-when--commit->filename commit))
          (line     (git-when--blame->line blame-data (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
-    (git-when rev filename orig-lineno)))
+    ;; No-op if buffer's visited-rev is same as target rev.
+    (unless (string-equal visited-rev rev)
+      (git-when rev filename orig-lineno))))
 
 (defun git-when-display-commit ()
   "Displays commit details in the echo area for the line at point."
@@ -103,7 +105,7 @@ Needs to be run from a git blame buffer."
   (let* ((buffer-name (git-when--buffer-name rev file))
          (curr-line (line-number-at-pos)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
-    (with-current-buffer (get-buffer-create buffer-name)
+    (with-current-buffer (git-when--recreate-buffer buffer-name)
       ;; Fontify buffer by setting the right major mode for the file name.
       (let ((major-mode-fn (or (assoc-default (buffer-name) auto-mode-alist #'string-match) #'ignore)))
         (funcall major-mode-fn))
@@ -148,6 +150,7 @@ Needs to be run from a git blame buffer."
       ;; Enable keymap for blame navigation.
       (use-local-map git-when-buffer-keymap)
       (setq-local blame-data blame-data)
+      (setq-local visited-rev rev)
       (display-buffer-same-window (current-buffer) '()))
     (set-buffer (git-when--buffer-name rev file))))
 
@@ -275,6 +278,12 @@ Needs to be run from a git blame buffer."
         (format "%d %s" time (concat unit "s"))
       (format "%d %s" time unit))))
 
+(defun git-when--recreate-buffer (buffer-name)
+  "Forcefully create a new buffer named BUFFER-NAME.
+If an identically named buffer exists it is killed."
+  (when (bufferp (get-buffer buffer-name))
+    (kill-buffer buffer-name))
+  (get-buffer-create buffer-name))
 
 (cl-defstruct git-when--blame
   ;; A hash table of source file lines keyed on line number (starting at 1).
