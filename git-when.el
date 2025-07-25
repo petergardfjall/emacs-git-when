@@ -68,12 +68,12 @@ Needs to be run from a git blame buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* (
-         (commit   (git-when--blame->commit blame-data (line-number-at-pos)))
+  (let* ((commit   (git-when--blame->commit blame-data (line-number-at-pos)))
          (rev      (git-when--commit->rev commit))
          (filename (git-when--commit->filename commit))
-         (lineno   (git-when--commit->original-lineno commit)))
-    (git-when rev filename lineno)))
+         (line     (git-when--blame->line blame-data (line-number-at-pos)))
+         (orig-lineno   (plist-get line :original-lineno)))
+    (git-when rev filename orig-lineno)))
 
 (defun git-when-display-commit ()
   "Displays commit details in the echo area for the line at point."
@@ -199,7 +199,7 @@ Needs to be run from a git blame buffer."
                (commit-rev    (nth 0 tokens))
                (orig-lineno   (string-to-number (nth 1 tokens)))
                (final-lineno  (string-to-number (nth 2 tokens)))
-               (commit (make-git-when--commit :rev commit-rev :original-lineno orig-lineno :final-lineno final-lineno)))
+               (commit (make-git-when--commit :rev commit-rev)))
           ;; Commit not encountered before, commit details will follow.
           (when (not (git-when--blame->get-commit blame-data commit-rev))
             (while (not (git-when--content-line-p (git-when--peek-next-line)))
@@ -220,7 +220,7 @@ Needs to be run from a git blame buffer."
           ;; The next (tab-prefixed) line holds the source code line.
           (let* ((content-line (git-when--next-line))
                  (line (string-trim-left content-line "\t")))
-            (git-when--blame->add-line blame-data final-lineno commit-rev line)))
+            (git-when--blame->add-line blame-data final-lineno orig-lineno commit-rev line)))
         (git-when--next-line))
       ;; Return the gathered blame data.
       blame-data)))
@@ -278,7 +278,10 @@ Needs to be run from a git blame buffer."
 
 (cl-defstruct git-when--blame
   ;; A hash table of source file lines keyed on line number (starting at 1).
-  ;; Each value is a plist with a `:commit' and a `:content' property.
+  ;; Each value is a plist with properties:
+  ;; - `:commit'
+  ;; - `:original-lineno'
+  ;; and a `:content' property.
   lines
   ;; A hash table of commit plists keyed on commit revisions.
   commits)
@@ -301,11 +304,11 @@ Needs to be run from a git blame buffer."
 (defun git-when--blame->get-commit (self commit-rev)
   (gethash commit-rev (git-when--blame-commits self)))
 
-(defun git-when--blame->add-line (self lineno commit-rev content)
+(defun git-when--blame->add-line (self lineno original-lineno commit-rev content)
   "Add a source code line for LINENO to the blame data captured by SELF.
 The source code line character are captured in the CONTENT string.
 The line was added by commit COMMIT-REV."
-  (let* ((line `(:commit ,commit-rev :content ,content)))
+  (let* ((line `(:commit ,commit-rev :original-lineno ,original-lineno :content ,content)))
     (puthash lineno line (git-when--blame-lines self))))
 
 (defun git-when--blame->line (self lineno)
@@ -330,10 +333,6 @@ Follows the git blame porcelain format [1].
 
   ;; 40-byte SHA-1 of the commit.
   rev
-  ;; The line number of the line in the original file.
-  original-lineno
-  ;; The line number of the line in the final file.
-  final-lineno
 
   ;; The filename in the commit that the line is attributed to
   filename
@@ -356,18 +355,6 @@ Follows the git blame porcelain format [1].
 
 (defun git-when--commit->set-rev (self rev)
   (setf (git-when--commit-rev self) rev))
-
-(defun git-when--commit->original-lineno (self)
-  (git-when--commit-original-lineno self))
-
-(defun git-when--commit->set-original-lineno (self lineno)
-  (setf (git-when--commit-original-lineno self) lineno))
-
-(defun git-when--commit->final-lineno (self)
-  (git-when--commit-final-lineno self))
-
-(defun git-when--commit->set-final-lineno (self lineno)
-  (setf (git-when--commit-final-lineno self) lineno))
 
 (defun git-when--commit->filename (self)
   (git-when--commit-filename self))
