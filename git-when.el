@@ -52,9 +52,9 @@
 
 (defun git-when (&optional rev file lineno)
   (interactive
-   (list "HEAD"                               ;; rev TODO: git rev-parse HEAD
-         (buffer-file-name (current-buffer))  ;; file
-         (line-number-at-pos)))               ;; lineno
+   (list (git-when--exec-output "git" "rev-parse" "HEAD")  ;; rev
+         (buffer-file-name (current-buffer))               ;; file
+         (line-number-at-pos)))                            ;; lineno
   (unless (vc-git-root file)
     (error "File %s is not under git control" file))
   (message "opening git-blame buffer for revision: %s, file: %s, line: %d" rev file lineno)
@@ -167,6 +167,17 @@ Needs to be run from a git blame buffer."
         (when (> exit-code 0)
           (error "git-blame gave non-zero exit code: %d" exit-code)))
       (git-when--parse-blame (current-buffer)))))
+
+
+(defun git-when--exec-output (command &rest args)
+  "Return the output from executing a shell COMMAND with ARGS arguments."
+  (with-temp-buffer
+    (let* ((fn-params (append (list command nil (current-buffer) nil) args))
+           (exit-code (apply #'call-process fn-params)))
+        (when (> exit-code 0)
+          (error "Command gave non-zero exit code: %d" exit-code))
+        (string-trim (buffer-substring (point-min) (point-max))))))
+
 
 (defun git-when--buffer-name (rev file)
   (format "git-when@%s:%s" rev (git-when--repo-path file)))
