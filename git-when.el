@@ -38,7 +38,8 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "<M-down>") #'git-when-at-point)
     (define-key map (kbd "<M-up>")   #'xref-go-back) ;; git-when-pop?
-    (define-key map (kbd "d")        #'git-when-display-commit) ;; Show in echo area
+    (define-key map (kbd "s")        #'git-when-show-commit) ;; Show in echo area
+    (define-key map (kbd "m")        #'git-when-show-commit-message) ;; Show in echo area
     map)
   "Keybindings available in the git blame buffer.")
 
@@ -77,21 +78,22 @@ Needs to be run from a git blame buffer."
     (unless (string-equal visited-rev rev)
       (git-when rev filename orig-lineno))))
 
-(defun git-when-display-commit ()
-  "Displays commit details in the echo area for the line at point."
+(defun git-when-show-commit ()
+  "Display `git show' details in the echo area for the commit at point."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((lines-table (plist-get blame-data :lines-table))
-         (commit-table (plist-get blame-data :commit-table))
-         (line (gethash (line-number-at-pos) lines-table))
-         (commit (gethash (plist-get line :commit) commit-table))
+  (let* ((rev (git-when--blame->commit-rev blame-data (line-number-at-pos)))
+         (message (git-when--exec-output "git" "show" "--pretty=medium"  rev)))
+    (display-message-or-buffer message)))
 
-         (rev     (git-when--commit->rev commit))
-         (author  (git-when--commit->author commit))
-         (time    (format-time-string "%a %b %d %H:%M:%S %Y %z" (git-when--commit->time commit)))
-         (summary (git-when--commit->summary commit))
-         (message (format "commit %s\nAuthor: %s\nDate: %s\n\n    %s" rev author time summary)))
+(defun git-when-show-commit-message ()
+  "Display `git show' details in the echo area for the commit at point."
+  (interactive)
+  (when (not (git-when-buffer-p (current-buffer)))
+    (error "Not visiting a blame buffer"))
+  (let* ((rev (git-when--blame->commit-rev blame-data (line-number-at-pos)))
+         (message (git-when--exec-output "git" "show" "--pretty=medium" "--no-patch" rev)))
     (display-message-or-buffer message)))
 
 (defun git-when-buffer-p (buffer)
