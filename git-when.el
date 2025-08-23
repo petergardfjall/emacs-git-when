@@ -52,6 +52,7 @@
 
 
 (defun git-when (&optional rev file lineno)
+  """TODO: file should be an absolute path."""
   (interactive
    (list (git-when--exec-output "git" "rev-parse" "HEAD")  ;; rev
          (buffer-file-name (current-buffer))               ;; file
@@ -72,11 +73,12 @@ Needs to be run from a git blame buffer."
   (let* ((commit   (git-when--blame->commit blame-data (line-number-at-pos)))
          (rev      (git-when--commit->rev commit))
          (filename (git-when--commit->filename commit))
+         (absfile  (file-name-concat visited-repo-root filename))
          (line     (git-when--blame->line blame-data (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
     ;; No-op if buffer's visited-rev is same as target rev.
     (unless (string-equal visited-rev rev)
-      (git-when rev filename orig-lineno))))
+      (git-when rev absfile orig-lineno))))
 
 (defun git-when-show-commit ()
   "Display `git show' details in the echo area for the commit at point."
@@ -153,6 +155,7 @@ Needs to be run from a git blame buffer."
       (use-local-map git-when-buffer-keymap)
       (setq-local blame-data blame-data)
       (setq-local visited-rev rev)
+      (setq-local visited-repo-root (vc-git-root file))
       (display-buffer-same-window (current-buffer) '()))
     (set-buffer (git-when--buffer-name rev file))))
 
@@ -163,11 +166,11 @@ Needs to be run from a git blame buffer."
     (when-let* ((git-root (vc-git-root file))
                 (repo-path (git-when--repo-path file))
                 (gitcmd (executable-find "git")))
-                ;; (statuses (make-hash-table :test 'equal))
-      (setq-local default-directory git-root)
+      (setq-local default-directory (expand-file-name git-root))
       (let ((exit-code (call-process gitcmd nil (current-buffer) nil "blame" "--porcelain" rev "--" repo-path)))
         (when (> exit-code 0)
-          (error "git-blame gave non-zero exit code: %d" exit-code)))
+          (error "git-blame gave non-zero exit code: %d\n%s" exit-code
+                 (buffer-substring-no-properties (point-min) (point-max)))))
       (git-when--parse-blame (current-buffer)))))
 
 
