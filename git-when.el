@@ -36,31 +36,33 @@
 
 (defvar git-when-buffer-keymap
   (let ((map (make-sparse-keymap)))
+    ;; Show a blame buffer for commit at point in current blame buffer.
     (define-key map (kbd "<M-down>")  #'git-when-at-point)
     (define-key map (kbd "M-p")       #'git-when-parent-commit-at-point)
     (define-key map (kbd "<M-up>")    #'xref-go-back)
-    (define-key map (kbd "c")         #'git-when-show-commit)         ;; Show commit at point in blame buffer.
+    ;; Show commit at point in current blame buffer.
+    (define-key map (kbd "c")         #'git-when-show-commit)
+    ;; Show commit message at point in current blame buffer.
     (define-key map (kbd "m")         #'git-when-show-commit-message)
     map)
   "Keybindings available in the git blame buffer.")
 
-
 (defvar git-when--commit-margin-width 40
   "The width (in characters) that the commit info in the left margin will occupy.")
 
-(defvar git-when--git-cmd
-  "Full system path to a git executable.")
-
 
 (defun git-when (&optional rev file lineno)
-  """TODO: file should be an absolute path."""
+  "Opens a blame buffer that shows what commit and author last modified each line in FILE.
+If no FILE is given, the file visited by the current buffer is assumed.
+The REV argument can be supplied to specify the starting point for the
+blame if anything other than 'HEAD' is desired.  The cursor will be
+placed at line LINENO in the blame buffer."
   (interactive
    (list (git-when--exec-output "git" "rev-parse" "HEAD")  ;; rev
          (buffer-file-name (current-buffer))               ;; file
          (line-number-at-pos)))                            ;; lineno
   (unless (vc-git-root file)
     (error "File %s is not under git control" file))
-  (message "opening git-blame buffer for revision: %s, file: %s, line: %d" rev file lineno)
   (let ((blamefile (git-when--blame-exec rev file)))
     (git-when--show rev file blamefile)
     (goto-line lineno)))
@@ -110,6 +112,7 @@ The details are shown in the echo area if possible, otherwise in a pop-up buffer
          (message (git-when--exec-output "git" "show" "--pretty=medium"  rev)))
     (display-message-or-buffer message)))
 
+
 (defun git-when-show-commit-message ()
   "Display the commit message for the commit at point.
 The message is shown in the echo area if possible, otherwise in a pop-up buffer."
@@ -120,8 +123,9 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
          (message (git-when--exec-output "git" "show" "--pretty=medium" "--no-patch" rev)))
     (display-message-or-buffer message)))
 
+
 (defun git-when-buffer-p (buffer)
-  "Indicates if the BUFFER is a git blame buffer."
+  "Indicates if BUFFER is a git blame buffer."
   (local-variable-if-set-p 'git-when--blamefile buffer))
 
 
