@@ -184,9 +184,8 @@ The buffer is named 'git-when@<REV>:<FILE>'"
 
 
 (defun git-when--blame-exec (rev file)
-  "Returns a `git-when--file' blame summary of a given FILE and REV.
-Returns a .
-"
+  "Run git blame against FILE and revision REV.
+The git blame output is parsed into a `git-when--file' blame summary."
   (with-temp-buffer
     (when-let* ((git-root (vc-git-root file))
                 (repo-path (git-when--repo-path file))
@@ -217,28 +216,17 @@ Returns a .
   (when-let* ((git-root (vc-git-root path)))
     (file-relative-name path git-root)))
 
-;; TODO change parsing to produce two things
-;; - commit-table: hash map keyed on commit-rev -> plist (:author, :author-mail, :summary, etc)
-;; - lines: array keyed on line number with each entry being a plist (:commit, :content)
-;;
-;; Use --line-porcelain
-;; repeat until EOF
-;; - lineindex++
-;; - create next commit-object
-;; - if not blame header: error
-;; - if not commit already in commit-table:
-;;   - populate commit-object properties until reaching content-line ('\t')
-;; - commit-table[rev] = commit-object
-;; - file-lines[lineindex] = line(:commit rev, :content: read-next-line())
+
 (defun git-when--parse-blame (output-buffer)
-  "Parse the OUTPUT-BUFFER of a git blame call into a `git-when--file'."
+  "Parses a git blame OUTPUT-BUFFER into a `git-when--file' struct."
   (with-current-buffer output-buffer
     (goto-char (point-min))
     (let* ((blamefile (git-when--file->new)))
       (while (not (eobp))
         (when (not (git-when--porcelain-header-p (git-when--current-line)))
           (error "Failed to parse git blame output: expected porcelain header"))
-        ;; Parse git blame header row for line.
+        ;; Parse git blame header row for the next line in file.
+        ;; <sha-1> <lineno-original> <lineno-final> [num-group-lines]
         (let* ((tokens (split-string (git-when--current-line)))
                (commit-rev    (nth 0 tokens))
                (orig-lineno   (string-to-number (nth 1 tokens)))
