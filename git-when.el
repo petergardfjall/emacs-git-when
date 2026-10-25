@@ -62,7 +62,7 @@
     (error "File %s is not under git control" file))
   (message "opening git-blame buffer for revision: %s, file: %s, line: %d" rev file lineno)
   (let ((blamefile (git-when--blame-exec rev file)))
-    (git-when--render rev file blamefile)
+    (git-when--show rev file blamefile)
     (goto-line lineno)))
 
 (defun git-when-at-point ()
@@ -124,8 +124,11 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
   "Indicates if the BUFFER is a git blame buffer."
   (local-variable-if-set-p 'git-when--blamefile buffer))
 
-(defun git-when--render (rev file blamefile)
-  "Sets the rendered buffer to be the current buffer."
+
+(defun git-when--show (rev file blamefile)
+  "Opens a buffer that displays the BLAMEFILE data for commit REV in FILE.
+The buffer is named 'git-when@<REV>:<FILE>'"
+  (cl-check-type blamefile git-when--file)
   (let* ((buffer-name (git-when--buffer-name rev file))
          (curr-line (line-number-at-pos)))
     (xref-push-marker-stack) ;; Allow moving back by popping xref marker stack.
