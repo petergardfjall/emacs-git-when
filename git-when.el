@@ -58,7 +58,9 @@ The REV argument can be supplied to specify the starting point for the
 blame if anything other than 'HEAD' is desired.  The cursor will be
 placed at line LINENO in the blame buffer."
   (interactive
-   (list (git-when--exec-output "git" "rev-parse" "HEAD")  ;; rev
+   (list (git-when--exec-output
+          "git" "log" "--format=%H" "--max-count=1"
+          (buffer-file-name (current-buffer)))             ;; rev
          (buffer-file-name (current-buffer))               ;; file
          (line-number-at-pos)))                            ;; lineno
   (unless (vc-git-root file)
