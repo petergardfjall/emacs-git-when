@@ -248,10 +248,11 @@ The git blame output is parsed into a `git-when--file' blame summary."
                 (pcase key
                   ("author"         (git-when--commit->set-author commit val))
                   ("author-mail"    (git-when--commit->set-mail commit val))
-                  ("author-time"
+                  ;; Note: GitHub blame uses committer-{time,tz} instead of author-{time,tz}.
+                  ("committer-time"
                    (git-when--commit->set-time commit (git-when--parse-time val))
                    (git-when--commit->set-htime commit (git-when--humanize-time (git-when--parse-time val))))
-                  ("author-tz"      (git-when--commit->set-tz commit val))
+                  ("committer-tz"      (git-when--commit->set-tz commit val))
                   ("summary"        (git-when--commit->set-summary commit (string-remove-prefix "summary " line)))
                   ("filename"       (git-when--commit->set-filename commit (string-remove-prefix "filename " line))))))
             (git-when--file->add-commit blamefile commit))
@@ -298,17 +299,17 @@ Such a line has format:
   (let* ((time-with-unit
           (let* ((seconds-since (time-to-seconds (time-since time))))
             (if (> seconds-since (* 365 24 3600))
-                `(,(floor (/ seconds-since (* 365 24 3600))) . "year")
+                `(,(round (/ seconds-since (* 365 24 3600))) . "year")
               (if (> seconds-since (* 30 24 3600))
-                  `(,(floor (/ seconds-since (* 30 24 3600))) . "month")
+                  `(,(round (/ seconds-since (* 30 24 3600))) . "month")
                 (if (> seconds-since (* 7 24 3600))
-                    `(,(floor (/ seconds-since (* 7 24 3600))) . "week")
+                    `(,(round (/ seconds-since (* 7 24 3600))) . "week")
                   (if (> seconds-since (* 24 3600))
-                      `(,(floor (/ seconds-since (* 24 3600))) . "day")
+                      `(,(round (/ seconds-since (* 24 3600))) . "day")
                     (if (> seconds-since 3600)
-                        `(,(floor (/ seconds-since 3600)) . "hour")
+                        `(,(round (/ seconds-since 3600)) . "hour")
                       (if (> seconds-since 60)
-                          `(,(floor (/ seconds-since 60)) . "minute")
+                          `(,(round (/ seconds-since 60)) . "minute")
                         `(,seconds-since . "second")))))))))
          (time (round (car time-with-unit)))
          (unit (cdr time-with-unit)))
