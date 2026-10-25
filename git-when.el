@@ -373,8 +373,7 @@ The line was added by commit COMMIT-REV."
   "Holds commit details for one line of a source file.
 Follows the git blame porcelain format [1].
 
-[1] https://git-scm.com/docs/git-blame#_the_porcelain_format
-"
+[1] https://git-scm.com/docs/git-blame#_the_porcelain_format"
 
   ;; 40-byte SHA-1 of the commit.
   rev
@@ -396,51 +395,67 @@ Follows the git blame porcelain format [1].
   author-tz)
 
 (defun git-when--commit->rev (self)
+  "Returns the full sha-256 commit hash for SELF."
   (git-when--commit-rev self))
 
 (defun git-when--commit->set-rev (self rev)
+  "Sets the full sha-256 commit hash for SELF to be REV."
   (setf (git-when--commit-rev self) rev))
 
 (defun git-when--commit->filename (self)
+  "Returns the repository filename (relative to repo root) for SELF."
   (git-when--commit-filename self))
 
 (defun git-when--commit->set-filename (self filename)
+  "Sets the repository filename (relative to repo root) for SELF to be FILENAME."
   (setf (git-when--commit-filename self) filename))
 
 (defun git-when--commit->summary (self)
+  "Returns the first line of commit message for SELF."
   (git-when--commit-summary self))
 
 (defun git-when--commit->set-summary (self summary)
+  "Sets the first line of commit message for SELF to be SUMMARY."
   (setf (git-when--commit-summary self) summary))
 
 (defun git-when--commit->author (self)
+  "Returns the author (Firstname Lastname) of commit SELF."
   (git-when--commit-author self))
 
 (defun git-when--commit->set-author (self author)
+  "Sets the author (Firstname Lastname) of commit SELF to be AUTHOR."
   (setf (git-when--commit-author self) author))
 
 (defun git-when--commit->mail (self)
+  "Returns the author email for commit SELF."
   (git-when--commit-author-mail self))
 
 (defun git-when--commit->set-mail (self email)
+  "Sets the author email for commit SELF to be EMAIL."
   (setf (git-when--commit-author-mail self) email))
 
 (defun git-when--commit->time (self)
+  "Returns the author timestamp (sec since epoch) for commit SELF."
   (git-when--commit-author-time self))
 
 (defun git-when--commit->set-time (self time)
+  "Sets the author timestamp (sec since epoch) for commit SELF to be TIME."
   (setf (git-when--commit-author-time self) time))
 
 (defun git-when--commit->htime (self)
+  "Returns a human-readable author timestamp (2 years) for commit SELF."
   (git-when--commit-author-htime self))
 
 (defun git-when--commit->set-htime (self htime)
+  "Sets the human-readable author timestamp (2 years) for commit SELF to be HTIME."
   (setf (git-when--commit-author-htime self) htime))
 
 (defun git-when--commit->tz (self)
+  "Returns an author timezone (+0200) for commit SELF."
   (git-when--commit-author-tz self))
 
 (defun git-when--commit->set-tz (self tz)
+  "Sets the author timezone (+0200) for commit SELF to be TZ."
   (setf (git-when--commit-author-tz self) tz))
 
 
