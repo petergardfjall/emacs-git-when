@@ -36,10 +36,11 @@
 
 (defvar git-when-buffer-keymap
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "<M-down>") #'git-when-at-point)
-    (define-key map (kbd "<M-up>")   #'xref-go-back) ;; git-when-pop?
-    (define-key map (kbd "s")        #'git-when-show-commit) ;; Show in echo area
-    (define-key map (kbd "m")        #'git-when-show-commit-message) ;; Show in echo area
+    (define-key map (kbd "<M-down>")  #'git-when-at-point)
+    (define-key map (kbd "M-p")       #'git-when-parent-commit-at-point)
+    (define-key map (kbd "<M-up>")    #'xref-go-back)
+    (define-key map (kbd "c")         #'git-when-show-commit)         ;; Show commit at point in blame buffer.
+    (define-key map (kbd "m")         #'git-when-show-commit-message)
     map)
   "Keybindings available in the git blame buffer.")
 
@@ -70,39 +71,58 @@ Needs to be run from a git blame buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((commit   (git-when--blame->commit blame-data (line-number-at-pos)))
+  (let* ((commit   (git-when--blame->commit git-when--blame-data (line-number-at-pos)))
          (rev      (git-when--commit->rev commit))
          (filename (git-when--commit->filename commit))
          (absfile  (file-name-concat visited-repo-root filename))
-         (line     (git-when--blame->line blame-data (line-number-at-pos)))
+         (line     (git-when--blame->line git-when--blame-data (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
     ;; No-op if buffer's visited-rev is same as target rev.
     (unless (string-equal visited-rev rev)
       (git-when rev absfile orig-lineno))))
 
-(defun git-when-show-commit ()
-  "Display `git show' details in the echo area for the commit at point."
+
+
+(defun git-when-parent-commit-at-point ()
+  "Does a git blame for the parent commit of the blame buffer's commit at point.
+Needs to be run from a git blame buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((rev (git-when--blame->commit-rev blame-data (line-number-at-pos)))
+  (let* ((commit   (git-when--blame->commit git-when--blame-data (line-number-at-pos)))
+         (rev      (git-when--commit->rev commit))
+         (filename (git-when--commit->filename commit))
+         (absfile  (file-name-concat visited-repo-root filename))
+         (line     (git-when--blame->line git-when--blame-data (line-number-at-pos)))
+         (orig-lineno   (plist-get line :original-lineno)))
+    (let ((parent-rev (git-when--exec-output "git" "log" "-1" "--format=%H" (format "%s~1" rev) "--" filename)))
+      ;; No-op if buffer's visited-rev is same as target rev.
+      (unless (string-equal visited-rev rev)
+        (git-when rev absfile orig-lineno)))))
+
+(defun git-when-show-commit ()
+  "Display `git show' details for the commit at point.
+The details are shown in the echo area if possible, otherwise in a pop-up buffer."
+  (interactive)
+  (when (not (git-when-buffer-p (current-buffer)))
+    (error "Not visiting a blame buffer"))
+  (let* ((rev (git-when--blame->commit-rev git-when--blame-data (line-number-at-pos)))
          (message (git-when--exec-output "git" "show" "--pretty=medium"  rev)))
     (display-message-or-buffer message)))
 
 (defun git-when-show-commit-message ()
-  "Display `git show' details in the echo area for the commit at point."
+  "Display the commit message for the commit at point.
+The message is shown in the echo area if possible, otherwise in a pop-up buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((rev (git-when--blame->commit-rev blame-data (line-number-at-pos)))
+  (let* ((rev (git-when--blame->commit-rev git-when--blame-data (line-number-at-pos)))
          (message (git-when--exec-output "git" "show" "--pretty=medium" "--no-patch" rev)))
     (display-message-or-buffer message)))
 
 (defun git-when-buffer-p (buffer)
   "Indicates if the BUFFER is a git blame buffer."
-  (with-current-buffer buffer
-    (boundp 'blame-data)))
-
+  (local-variable-if-set-p 'git-when--blame-data buffer))
 
 (defun git-when--render (rev file blame-data)
   "Sets the rendered buffer to be the current buffer."
@@ -153,7 +173,7 @@ Needs to be run from a git blame buffer."
 
       ;; Enable keymap for blame navigation.
       (use-local-map git-when-buffer-keymap)
-      (setq-local blame-data blame-data)
+      (setq-local git-when--blame-data blame-data)
       (setq-local visited-rev rev)
       (setq-local visited-repo-root (vc-git-root file))
       (display-buffer-same-window (current-buffer) '()))
