@@ -100,9 +100,7 @@ Needs to be run from a git blame buffer."
          (line     (git-when--file->line git-when--blamefile (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
     (let ((parent-rev (git-when--exec-output "git" "log" "-1" "--format=%H" (format "%s~1" rev) "--" filename)))
-      ;; No-op if buffer's visited-rev is same as target rev.
-      (unless (string-equal visited-rev rev)
-        (git-when rev absfile orig-lineno)))))
+      (git-when parent-rev absfile orig-lineno))))
 
 (defun git-when-show-commit ()
   "Display `git show' details for the commit at point.
