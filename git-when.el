@@ -61,8 +61,8 @@
   (unless (vc-git-root file)
     (error "File %s is not under git control" file))
   (message "opening git-blame buffer for revision: %s, file: %s, line: %d" rev file lineno)
-  (let ((blame-data (git-when--blame-exec rev file)))
-    (git-when--render rev file blame-data)
+  (let ((blamefile (git-when--blame-exec rev file)))
+    (git-when--render rev file blamefile)
     (goto-line lineno)))
 
 (defun git-when-at-point ()
@@ -71,11 +71,11 @@ Needs to be run from a git blame buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((commit   (git-when--blame->commit git-when--blame-data (line-number-at-pos)))
+  (let* ((commit   (git-when--file->commit git-when--blamefile (line-number-at-pos)))
          (rev      (git-when--commit->rev commit))
          (filename (git-when--commit->filename commit))
          (absfile  (file-name-concat visited-repo-root filename))
-         (line     (git-when--blame->line git-when--blame-data (line-number-at-pos)))
+         (line     (git-when--file->line git-when--blamefile (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
     ;; No-op if buffer's visited-rev is same as target rev.
     (unless (string-equal visited-rev rev)
@@ -89,11 +89,11 @@ Needs to be run from a git blame buffer."
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((commit   (git-when--blame->commit git-when--blame-data (line-number-at-pos)))
+  (let* ((commit   (git-when--file->commit git-when--blamefile (line-number-at-pos)))
          (rev      (git-when--commit->rev commit))
          (filename (git-when--commit->filename commit))
          (absfile  (file-name-concat visited-repo-root filename))
-         (line     (git-when--blame->line git-when--blame-data (line-number-at-pos)))
+         (line     (git-when--file->line git-when--blamefile (line-number-at-pos)))
          (orig-lineno   (plist-get line :original-lineno)))
     (let ((parent-rev (git-when--exec-output "git" "log" "-1" "--format=%H" (format "%s~1" rev) "--" filename)))
       ;; No-op if buffer's visited-rev is same as target rev.
@@ -106,7 +106,7 @@ The details are shown in the echo area if possible, otherwise in a pop-up buffer
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((rev (git-when--blame->commit-rev git-when--blame-data (line-number-at-pos)))
+  (let* ((rev (git-when--file->commit-rev git-when--blamefile (line-number-at-pos)))
          (message (git-when--exec-output "git" "show" "--pretty=medium"  rev)))
     (display-message-or-buffer message)))
 
@@ -116,15 +116,15 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
   (interactive)
   (when (not (git-when-buffer-p (current-buffer)))
     (error "Not visiting a blame buffer"))
-  (let* ((rev (git-when--blame->commit-rev git-when--blame-data (line-number-at-pos)))
+  (let* ((rev (git-when--file->commit-rev git-when--blamefile (line-number-at-pos)))
          (message (git-when--exec-output "git" "show" "--pretty=medium" "--no-patch" rev)))
     (display-message-or-buffer message)))
 
 (defun git-when-buffer-p (buffer)
   "Indicates if the BUFFER is a git blame buffer."
-  (local-variable-if-set-p 'git-when--blame-data buffer))
+  (local-variable-if-set-p 'git-when--blamefile buffer))
 
-(defun git-when--render (rev file blame-data)
+(defun git-when--render (rev file blamefile)
   "Sets the rendered buffer to be the current buffer."
   (let* ((buffer-name (git-when--buffer-name rev file))
          (curr-line (line-number-at-pos)))
@@ -138,10 +138,10 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
       (erase-buffer)
       (setq-local left-margin-width git-when--commit-margin-width)
       ;; Render each line with commit data as an overlay in the left margin.
-      (dotimes (i (git-when--blame->num-lines blame-data))
+      (dotimes (i (git-when--file->num-lines blamefile))
         (let* ((lineno (1+ i))
-               (line (git-when--blame->line blame-data lineno))
-               (commit (git-when--blame->commit blame-data lineno))
+               (line (git-when--file->line blamefile lineno))
+               (commit (git-when--file->commit blamefile lineno))
                (commit-rev (git-when--commit->rev commit))
                (htime (git-when--commit->htime commit))
                (summary (git-when--commit->summary commit))
@@ -158,7 +158,7 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
           (when (or (eql lineno 1)
                     (and (> lineno 1)
                          (not (string-equal
-                               (git-when--blame->commit-rev blame-data (1- lineno))
+                               (git-when--file->commit-rev blamefile (1- lineno))
                                commit-rev))))
             ;; Display commit data in margin:
             ;; see https://github.com/magit/magit/issues/1381
@@ -173,7 +173,7 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
 
       ;; Enable keymap for blame navigation.
       (use-local-map git-when-buffer-keymap)
-      (setq-local git-when--blame-data blame-data)
+      (setq-local git-when--blamefile blamefile)
       (setq-local visited-rev rev)
       (setq-local visited-repo-root (vc-git-root file))
       (display-buffer-same-window (current-buffer) '()))
@@ -181,7 +181,9 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
 
 
 (defun git-when--blame-exec (rev file)
-  "TODO: return a hash table mapping line numbers to commit structs"
+  "Returns a `git-when--file' blame summary of a given FILE and REV.
+Returns a .
+"
   (with-temp-buffer
     (when-let* ((git-root (vc-git-root file))
                 (repo-path (git-when--repo-path file))
@@ -189,7 +191,7 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
       (setq-local default-directory (expand-file-name git-root))
       (let ((exit-code (call-process gitcmd nil (current-buffer) nil "blame" "--porcelain" rev "--" repo-path)))
         (when (> exit-code 0)
-          (error "git-blame gave non-zero exit code: %d\n%s" exit-code
+          (error "Git blame gave non-zero exit code: %d\n%s" exit-code
                  (buffer-substring-no-properties (point-min) (point-max)))))
       (git-when--parse-blame (current-buffer)))))
 
@@ -226,10 +228,10 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
 ;; - commit-table[rev] = commit-object
 ;; - file-lines[lineindex] = line(:commit rev, :content: read-next-line())
 (defun git-when--parse-blame (output-buffer)
-  "Parse the OUTPUT-BUFFER of a git blame call."
+  "Parse the OUTPUT-BUFFER of a git blame call into a `git-when--file'."
   (with-current-buffer output-buffer
     (goto-char (point-min))
-    (let* ((blame-data (git-when--blame->new)))
+    (let* ((blamefile (git-when--file->new)))
       (while (not (eobp))
         (when (not (git-when--porcelain-header-p (git-when--current-line)))
           (error "Failed to parse git blame output: expected porcelain header"))
@@ -240,7 +242,7 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
                (final-lineno  (string-to-number (nth 2 tokens)))
                (commit (make-git-when--commit :rev commit-rev)))
           ;; Commit not encountered before, commit details will follow.
-          (when (not (git-when--blame->get-commit blame-data commit-rev))
+          (when (not (git-when--file->get-commit blamefile commit-rev))
             (while (not (git-when--content-line-p (git-when--peek-next-line)))
               (let* ((line (git-when--next-line))
                      (tokens (split-string line))
@@ -255,44 +257,47 @@ The message is shown in the echo area if possible, otherwise in a pop-up buffer.
                   ("author-tz"      (git-when--commit->set-tz commit val))
                   ("summary"        (git-when--commit->set-summary commit (string-remove-prefix "summary " line)))
                   ("filename"       (git-when--commit->set-filename commit (string-remove-prefix "filename " line))))))
-            (git-when--blame->add-commit blame-data commit))
+            (git-when--file->add-commit blamefile commit))
           ;; The next (tab-prefixed) line holds the source code line.
           (let* ((content-line (git-when--next-line))
                  (line (string-trim-left content-line "\t")))
-            (git-when--blame->add-line blame-data final-lineno orig-lineno commit-rev line)))
+            (git-when--file->add-line blamefile final-lineno orig-lineno commit-rev line)))
         (git-when--next-line))
       ;; Return the gathered blame data.
-      blame-data)))
+      blamefile)))
 
 
 (defun git-when--peek-next-line ()
-  "Return the next line without moving cursor."
+  "Return the next line in the current buffer without moving point."
   (save-excursion (git-when--next-line)))
 
 (defun git-when--next-line ()
-  "TODO"
+  "Moves point to the next line in the current buffer."
   (forward-line 1)
   (git-when--current-line))
 
 (defun git-when--current-line ()
-  "TODO"
+  "Return the entire line at point in the current buffer."
   (buffer-substring (line-beginning-position) (line-end-position)))
 
 (defun git-when--content-line-p (line)
+  "Predicate that checks if LINE represents an (indented) content line."
   (string-prefix-p "\t" line))
 
 (defun git-when--porcelain-header-p (line)
-  ;; <commit> <lineno-prior> <lineno-final> [num-group-lines]
+  "Predicate that checks if LINE is a header that precedes a blame line.
+Such a line has format:
+  <sha-1> <lineno-original> <lineno-final> [num-group-lines]"
   (string-match "[0-9a-f]\\{40\\} [0-9]+ [0-9]+\\( [0-9]+\\)?" line))
 
 
 (defun git-when--parse-time (epoch-time-string)
-  "Convert a git blame timestamp like '1727681138' to a Lisp timestamp."
+  "Convert a git blame EPOCH-TIME-STRING like '1727681138' to a Lisp timestamp."
   (time-convert (string-to-number epoch-time-string)))
 
 
 (defun git-when--humanize-time (time)
-  ;; TODO
+  "Converts a TIME (in seconds since epoch) into a human-readable elapsed time since string like '2 weeks'."
   (let* ((time-with-unit
           (let* ((seconds-since (time-to-seconds (time-since time))))
             (if (> seconds-since (* 365 24 3600))
@@ -321,52 +326,64 @@ If an identically named buffer exists it is killed."
     (kill-buffer buffer-name))
   (get-buffer-create buffer-name))
 
-(cl-defstruct git-when--blame
-  ;; A hash table of source file lines keyed on line number (starting at 1).
-  ;; Each value is a plist with properties:
+
+(cl-defstruct git-when--file
+  "Holds parsed git blame output for a file."
+
+  ;; Holds git blame data for a file orgainzed as a lookup table keyed on line
+  ;; number (starting at 1). Each value is a plist with properties:
   ;; - `:commit'
   ;; - `:original-lineno'
-  ;; and a `:content' property.
+  ;; - `:content'
   lines
   ;; A hash table of commit plists keyed on commit revisions.
   commits)
 
-(defun git-when--blame->new ()
-  "Create an empty blame data struct."
-  (make-git-when--blame
+(defun git-when--file->new ()
+  "Create an empty blame file struct."
+  (make-git-when--file
    :lines (make-hash-table :test 'equal)
    :commits (make-hash-table :test 'equal)))
 
-(defun git-when--blame->num-lines (self)
-  "Do x on SELF."
-  (hash-table-count (git-when--blame-lines self)))
+(defun git-when--file->num-lines (self)
+  "Returns the number of lines contained in SELF."
+  (hash-table-count (git-when--file-lines self)))
 
-(defun git-when--blame->add-commit (self commit)
-  "Add details about a COMMIT to SELF."
+(defun git-when--file->add-commit (self commit)
+  "Add a COMMIT to SELF.
+The COMMIT is of type `git-when--commit'."
+  (cl-check-type commit git-when--commit)
   (let* ((rev (git-when--commit->rev commit)))
-    (puthash rev commit (git-when--blame-commits self))))
+    (puthash rev commit (git-when--file-commits self))))
 
-(defun git-when--blame->get-commit (self commit-rev)
-  (gethash commit-rev (git-when--blame-commits self)))
+(defun git-when--file->get-commit (self rev)
+  "Get a commit recorded for at least one line in SELF with a given REV.
+The commit is of type `git-when--commit'."
+  (gethash rev (git-when--file-commits self)))
 
-(defun git-when--blame->add-line (self lineno original-lineno commit-rev content)
-  "Add a source code line for LINENO to the blame data captured by SELF.
-The source code line character are captured in the CONTENT string.
-The line was added by commit COMMIT-REV."
+(defun git-when--file->add-line (self lineno original-lineno commit-rev content)
+  "Add a blame source code line to SELF.
+LINENO is the line number of the line in the final file.
+ORIGINAL-LINENO is the line number of the line in the original file.
+COMMIT-REV is the 40-byte checksum of the revision that the line is attributed to.
+CONTENT holds the character content of the string."
   (let* ((line `(:commit ,commit-rev :original-lineno ,original-lineno :content ,content)))
-    (puthash lineno line (git-when--blame-lines self))))
+    (puthash lineno line (git-when--file-lines self))))
 
-(defun git-when--blame->line (self lineno)
-  (gethash lineno (git-when--blame-lines self)))
+(defun git-when--file->line (self lineno)
+  "Returns a plist representing the blame data for the given LINENO in SELF."
+  (gethash lineno (git-when--file-lines self)))
 
-(defun git-when--blame->commit (self lineno)
-  (let* ((commit-rev (git-when--blame->commit-rev self lineno)))
-    (gethash commit-rev (git-when--blame-commits self))))
+(defun git-when--file->commit (self lineno)
+  "Returns the commit found at LINENO in SELF.
+The commit is of type `git-when--commit'."
+  (let* ((commit-rev (git-when--file->commit-rev self lineno)))
+    (gethash commit-rev (git-when--file-commits self))))
 
-(defun git-when--blame->commit-rev (self lineno)
-  (let* ((line (git-when--blame->line self lineno)))
+(defun git-when--file->commit-rev (self lineno)
+  "Returns the checksum of the commit found at LINENO in SELF."
+  (let* ((line (git-when--file->line self lineno)))
     (plist-get line :commit)))
-
 
 
 (cl-defstruct git-when--commit
@@ -395,11 +412,11 @@ Follows the git blame porcelain format [1].
   author-tz)
 
 (defun git-when--commit->rev (self)
-  "Returns the full sha-256 commit hash for SELF."
+  "Returns the full 40 byte checksum commit hash for SELF."
   (git-when--commit-rev self))
 
 (defun git-when--commit->set-rev (self rev)
-  "Sets the full sha-256 commit hash for SELF to be REV."
+  "Sets the full 40 byte commit hash for SELF to be REV."
   (setf (git-when--commit-rev self) rev))
 
 (defun git-when--commit->filename (self)
